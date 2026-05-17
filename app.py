@@ -158,27 +158,6 @@ def get_business_unit() -> Dict[str, Any]:
 
 
 @mcp.tool
-def resolve_supplier(
-    supplier_name: str,
-    supplier_site: Optional[str] = None
-) -> Dict[str, Any]:
-    log_request(
-        "resolve_supplier",
-        supplier_name=supplier_name,
-        supplier_site=supplier_site
-    )
-
-    result = {
-        "supplier_name": supplier_name,
-        "supplier_site": supplier_site,
-        "status": "FOUND" if supplier_name in ALLOWED_SUPPLIERS else "NOT_FOUND"
-    }
-
-    log_response("resolve_supplier", result)
-    return result
-
-
-@mcp.tool
 def validate_supplier_context_tool(
     business_unit: str,
     supplier: str,

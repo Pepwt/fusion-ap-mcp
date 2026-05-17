@@ -19,13 +19,13 @@ logger = logging.getLogger(__name__)
 
 mcp = FastMCP(name="Fusion_AP_MCP_Server")
 
-# Env
+# Environment
 FUSION_BASE_URL = os.getenv("FUSION_BASE_URL", "").rstrip("/")
 FUSION_USER = os.getenv("FUSION_USER", "")
 FUSION_PASSWORD = os.getenv("FUSION_PASSWORD", "")
 USE_REAL_FUSION = os.getenv("USE_REAL_FUSION", "false").lower() == "true"
 
-# Validação local simples
+# Mock validations
 ALLOWED_BUSINESS_UNITS = {
     "Vision Operations",
 }
@@ -49,6 +49,10 @@ def log_response(tool_name: str, result: Any):
     logger.info(f"[RESPONSE] {tool_name} | Result: {result}")
 
 
+def _clean(value: Optional[str]) -> str:
+    return (value or "").strip()
+
+
 def _fusion_auth():
     if not FUSION_USER or not FUSION_PASSWORD:
         raise ValueError("FUSION_USER e FUSION_PASSWORD precisam estar definidos no .env")
@@ -62,31 +66,37 @@ def _fusion_headers():
     }
 
 
+def normalize_description(description: Optional[str]) -> str:
+    if description and description.strip():
+        return description.strip()
+    return "Invoice criada via Agent"
+
+
 def validate_invoice_payload(
-    business_unit: str,
-    supplier: str,
-    supplier_site: str,
-    invoice_number: str,
-    invoice_date: str,
-    amount: float,
-    currency: str,
+    business_unit: Optional[str],
+    supplier: Optional[str],
+    supplier_site: Optional[str],
+    invoice_number: Optional[str],
+    invoice_date: Optional[str],
+    amount: Optional[float],
+    currency: Optional[str],
     description: Optional[str] = None
 ) -> Dict[str, Any]:
     errors: List[str] = []
 
-    if not business_unit or not business_unit.strip():
+    if not _clean(business_unit):
         errors.append("business_unit is required")
 
-    if not supplier or not supplier.strip():
+    if not _clean(supplier):
         errors.append("supplier is required")
 
-    if not supplier_site or not supplier_site.strip():
+    if not _clean(supplier_site):
         errors.append("supplier_site is required")
 
-    if not invoice_number or not invoice_number.strip():
+    if not _clean(invoice_number):
         errors.append("invoice_number is required")
 
-    if not invoice_date or not invoice_date.strip():
+    if not _clean(invoice_date):
         errors.append("invoice_date is required")
     else:
         if not re.match(r"^\d{4}-\d{2}-\d{2}$", invoice_date.strip()):
@@ -102,10 +112,9 @@ def validate_invoice_payload(
         except (TypeError, ValueError):
             errors.append("amount must be numeric")
 
-    if not currency or not currency.strip():
+    if not _clean(currency):
         errors.append("currency is required")
 
-    # description virou opcional
     return {
         "valid": len(errors) == 0,
         "errors": errors
@@ -113,31 +122,25 @@ def validate_invoice_payload(
 
 
 def validate_supplier_context(
-    business_unit: str,
-    supplier: str,
-    supplier_site: str
+    business_unit: Optional[str],
+    supplier: Optional[str],
+    supplier_site: Optional[str]
 ) -> Dict[str, Any]:
     errors: List[str] = []
 
-    if business_unit and business_unit not in ALLOWED_BUSINESS_UNITS:
+    if _clean(business_unit) and business_unit not in ALLOWED_BUSINESS_UNITS:
         errors.append(f"business_unit '{business_unit}' not recognized")
 
-    if supplier and supplier not in ALLOWED_SUPPLIERS:
+    if _clean(supplier) and supplier not in ALLOWED_SUPPLIERS:
         errors.append(f"supplier '{supplier}' not recognized")
 
-    if supplier_site and supplier_site not in ALLOWED_SUPPLIER_SITES:
+    if _clean(supplier_site) and supplier_site not in ALLOWED_SUPPLIER_SITES:
         errors.append(f"supplier_site '{supplier_site}' not recognized")
 
     return {
         "valid": len(errors) == 0,
         "errors": errors
     }
-
-
-def normalize_description(description: Optional[str]) -> str:
-    if description and description.strip():
-        return description.strip()
-    return "Invoice criada via Agent"
 
 
 @mcp.tool
@@ -159,9 +162,9 @@ def get_business_unit() -> Dict[str, Any]:
 
 @mcp.tool
 def validate_supplier_context_tool(
-    business_unit: str,
-    supplier: str,
-    supplier_site: str
+    business_unit: Optional[str] = None,
+    supplier: Optional[str] = None,
+    supplier_site: Optional[str] = None
 ) -> Dict[str, Any]:
     log_request(
         "validate_supplier_context_tool",
@@ -182,13 +185,13 @@ def validate_supplier_context_tool(
 
 @mcp.tool
 def validate_invoice_payload_tool(
-    business_unit: str,
-    supplier: str,
-    supplier_site: str,
-    invoice_number: str,
-    invoice_date: str,
-    amount: float,
-    currency: str,
+    business_unit: Optional[str] = None,
+    supplier: Optional[str] = None,
+    supplier_site: Optional[str] = None,
+    invoice_number: Optional[str] = None,
+    invoice_date: Optional[str] = None,
+    amount: Optional[float] = None,
+    currency: Optional[str] = None,
     description: Optional[str] = None
 ) -> Dict[str, Any]:
     log_request(
@@ -220,13 +223,13 @@ def validate_invoice_payload_tool(
 
 @mcp.tool
 def create_ap_invoice(
-    business_unit: str,
-    supplier: str,
-    supplier_site: str,
-    invoice_number: str,
-    invoice_date: str,
-    amount: float,
-    currency: str,
+    business_unit: Optional[str] = None,
+    supplier: Optional[str] = None,
+    supplier_site: Optional[str] = None,
+    invoice_number: Optional[str] = None,
+    invoice_date: Optional[str] = None,
+    amount: Optional[float] = None,
+    currency: Optional[str] = None,
     description: Optional[str] = None
 ) -> Dict[str, Any]:
     log_request(
@@ -256,9 +259,9 @@ def create_ap_invoice(
 
     if not payload_validation["valid"]:
         result = {
-            "status": "ERROR",
-            "message": "Invoice payload inválido",
-            "validation_errors": payload_validation["errors"]
+            "status": "NEEDS_INFO",
+            "message": "Campos obrigatórios faltantes",
+            "missing_fields": payload_validation["errors"]
         }
         log_response("create_ap_invoice", result)
         return result
@@ -271,14 +274,13 @@ def create_ap_invoice(
 
     if not context_validation["valid"]:
         result = {
-            "status": "ERROR",
+            "status": "NEEDS_INFO",
             "message": "Contexto de fornecedor inválido",
-            "validation_errors": context_validation["errors"]
+            "missing_or_invalid_fields": context_validation["errors"]
         }
         log_response("create_ap_invoice", result)
         return result
 
-    # Modo mock para testar o fluxo Oracle -> MCP sem depender do Fusion
     if not USE_REAL_FUSION:
         result = {
             "status": "SUCCESS",
@@ -372,8 +374,7 @@ def create_ap_invoice(
 
 
 if __name__ == "__main__":
-
-    logger.info( "Starting Fusion AP MCP Server...")
+    logger.info("Starting Fusion AP MCP Server...")
     port = int(os.getenv("PORT", "10000"))
     mcp.run(
         transport="http",

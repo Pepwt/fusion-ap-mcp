@@ -59,7 +59,7 @@ def _clean(value: Optional[str]) -> str:
 
 def _fusion_auth():
     if not FUSION_USER or not FUSION_PASSWORD:
-        raise ValueError("FUSION_USER e FUSION_PASSWORD precisam estar definidos no .env")
+        raise ValueError("FUSION_USER e FUSION_PASSWORD precisam estar definidos no ambiente")
     return HTTPBasicAuth(FUSION_USER, FUSION_PASSWORD)
 
 
@@ -140,8 +140,6 @@ def validate_invoice_payload(
 
     if USE_REAL_FUSION:
         for field_name, field_value in {
-            "accounting_date": accounting_date or invoice_date,
-            "terms_date": terms_date or invoice_date,
             "payment_method_code": payment_method_code or DEFAULT_PAYMENT_METHOD_CODE,
         }.items():
             if not _clean(field_value):
@@ -270,13 +268,13 @@ def validate_invoice_payload_tool(
 
 @mcp.tool
 def create_ap_invoice(
-    business_unit: Optional[str] = None,
-    supplier: Optional[str] = None,
-    supplier_site: Optional[str] = None,
-    invoice_number: Optional[str] = None,
-    invoice_date: Optional[str] = None,
-    amount: Optional[float] = None,
-    currency: Optional[str] = None,
+    business_unit: str,
+    supplier: str,
+    supplier_site: str,
+    invoice_number: str,
+    invoice_date: str,
+    amount: float,
+    currency: str,
     description: Optional[str] = None,
     accounting_date: Optional[str] = None,
     terms_date: Optional[str] = None,
@@ -285,6 +283,27 @@ def create_ap_invoice(
     invoice_type: Optional[str] = None,
     distribution_combination: Optional[str] = None
 ) -> Dict[str, Any]:
+    """
+    Create an Oracle Fusion Accounts Payable invoice.
+
+    Required user fields:
+    - business_unit: Payables business unit name, for example "Vision Operations"
+    - supplier: supplier/vendor name
+    - supplier_site: supplier site code/name, for example "MAIN"
+    - invoice_number: unique supplier invoice number
+    - invoice_date: invoice date in YYYY-MM-DD format
+    - amount: total invoice amount
+    - currency: invoice currency code, for example "USD" or "BRL"
+
+    Optional fields:
+    - description: invoice and line description
+    - accounting_date: defaults to invoice_date
+    - terms_date: defaults to invoice_date
+    - payment_method_code: defaults to environment DEFAULT_PAYMENT_METHOD_CODE
+    - invoice_source: defaults to environment DEFAULT_INVOICE_SOURCE
+    - invoice_type: defaults to environment DEFAULT_INVOICE_TYPE
+    - distribution_combination: accounting combination for the invoice line
+    """
     log_request(
         "create_ap_invoice",
         business_unit=business_unit,
@@ -327,7 +346,7 @@ def create_ap_invoice(
     if not payload_validation["valid"]:
         result = {
             "status": "NEEDS_INFO",
-            "message": "Campos obrigatórios faltantes",
+            "message": "Campos obrigatorios faltantes",
             "missing_fields": [_error_to_label(error) for error in payload_validation["errors"]],
             "details": payload_validation["errors"]
         }
@@ -343,7 +362,7 @@ def create_ap_invoice(
     if not context_validation["valid"]:
         result = {
             "status": "NEEDS_INFO",
-            "message": "Contexto de fornecedor inválido",
+            "message": "Contexto de fornecedor invalido",
             "missing_or_invalid_fields": context_validation["errors"]
         }
         log_response("create_ap_invoice", result)
@@ -376,7 +395,7 @@ def create_ap_invoice(
     if not FUSION_BASE_URL:
         result = {
             "status": "ERROR",
-            "message": "FUSION_BASE_URL ou FUSION_URL não está definido no ambiente"
+            "message": "FUSION_BASE_URL ou FUSION_URL nao esta definido no ambiente"
         }
         log_response("create_ap_invoice", result)
         return result

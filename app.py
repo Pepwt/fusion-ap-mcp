@@ -28,6 +28,7 @@ USE_MOCK_REFERENCE_VALIDATION = os.getenv("USE_MOCK_REFERENCE_VALIDATION", "fals
 DEFAULT_PAYMENT_METHOD_CODE = os.getenv("DEFAULT_PAYMENT_METHOD_CODE", "CHECK")
 DEFAULT_INVOICE_SOURCE = os.getenv("DEFAULT_INVOICE_SOURCE", "External")
 DEFAULT_INVOICE_TYPE = os.getenv("DEFAULT_INVOICE_TYPE", "Standard")
+INCLUDE_FUSION_RESPONSE = os.getenv("INCLUDE_FUSION_RESPONSE", "false").lower() == "true"
 
 # Mock validations
 ALLOWED_BUSINESS_UNITS = {
@@ -457,9 +458,11 @@ def create_ap_invoice(
             "invoice_amount": response_data.get("InvoiceAmount", amount),
             "invoice_currency": response_data.get("InvoiceCurrency", currency),
             "validation_status": response_data.get("ValidationStatus"),
-            "fusion_url": _extract_self_link(response_data),
-            "fusion_response": response_data
+            "fusion_url": _extract_self_link(response_data)
         }
+
+        if INCLUDE_FUSION_RESPONSE:
+            result["fusion_response"] = response_data
 
         log_response("create_ap_invoice", result)
         return result

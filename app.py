@@ -20,10 +20,14 @@ logger = logging.getLogger(__name__)
 mcp = FastMCP(name="Fusion_AP_MCP_Server")
 
 # Environment
-FUSION_BASE_URL = os.getenv("FUSION_BASE_URL", "").rstrip("/")
+FUSION_BASE_URL = (os.getenv("FUSION_BASE_URL") or os.getenv("FUSION_URL") or "").rstrip("/")
 FUSION_USER = os.getenv("FUSION_USER", "")
 FUSION_PASSWORD = os.getenv("FUSION_PASSWORD", "")
 USE_REAL_FUSION = os.getenv("USE_REAL_FUSION", "false").lower() == "true"
+USE_MOCK_REFERENCE_VALIDATION = os.getenv("USE_MOCK_REFERENCE_VALIDATION", "false").lower() == "true"
+DEFAULT_PAYMENT_METHOD_CODE = os.getenv("DEFAULT_PAYMENT_METHOD_CODE", "CHECK")
+DEFAULT_INVOICE_SOURCE = os.getenv("DEFAULT_INVOICE_SOURCE", "External")
+DEFAULT_INVOICE_TYPE = os.getenv("DEFAULT_INVOICE_TYPE", "Standard")
 
 # Mock validations
 ALLOWED_BUSINESS_UNITS = {
@@ -72,6 +76,22 @@ def normalize_description(description: Optional[str]) -> str:
     return "Invoice criada via Agent"
 
 
+def _error_to_label(error: str) -> str:
+    return error.split(" is required", 1)[0] if error.endswith(" is required") else error
+
+
+def _extract_self_link(response_data: Dict[str, Any]) -> Optional[str]:
+    links = response_data.get("links")
+    if not isinstance(links, list):
+        return None
+
+    for link in links:
+        if isinstance(link, dict) and link.get("rel") == "self" and link.get("href"):
+            return link["href"]
+
+    return None
+
+
 def validate_invoice_payload(
     business_unit: Optional[str],
     supplier: Optional[str],
@@ -80,7 +100,10 @@ def validate_invoice_payload(
     invoice_date: Optional[str],
     amount: Optional[float],
     currency: Optional[str],
-    description: Optional[str] = None
+    description: Optional[str] = None,
+    accounting_date: Optional[str] = None,
+    terms_date: Optional[str] = None,
+    payment_method_code: Optional[str] = None
 ) -> Dict[str, Any]:
     errors: List[str] = []
 
@@ -115,6 +138,15 @@ def validate_invoice_payload(
     if not _clean(currency):
         errors.append("currency is required")
 
+    if USE_REAL_FUSION:
+        for field_name, field_value in {
+            "accounting_date": accounting_date or invoice_date,
+            "terms_date": terms_date or invoice_date,
+            "payment_method_code": payment_method_code or DEFAULT_PAYMENT_METHOD_CODE,
+        }.items():
+            if not _clean(field_value):
+                errors.append(f"{field_name} is required")
+
     return {
         "valid": len(errors) == 0,
         "errors": errors
@@ -127,6 +159,12 @@ def validate_supplier_context(
     supplier_site: Optional[str]
 ) -> Dict[str, Any]:
     errors: List[str] = []
+
+    if not USE_MOCK_REFERENCE_VALIDATION:
+        return {
+            "valid": True,
+            "errors": errors
+        }
 
     if _clean(business_unit) and business_unit not in ALLOWED_BUSINESS_UNITS:
         errors.append(f"business_unit '{business_unit}' not recognized")
@@ -192,7 +230,10 @@ def validate_invoice_payload_tool(
     invoice_date: Optional[str] = None,
     amount: Optional[float] = None,
     currency: Optional[str] = None,
-    description: Optional[str] = None
+    description: Optional[str] = None,
+    accounting_date: Optional[str] = None,
+    terms_date: Optional[str] = None,
+    payment_method_code: Optional[str] = None
 ) -> Dict[str, Any]:
     log_request(
         "validate_invoice_payload_tool",
@@ -203,7 +244,10 @@ def validate_invoice_payload_tool(
         invoice_date=invoice_date,
         amount=amount,
         currency=currency,
-        description=description
+        description=description,
+        accounting_date=accounting_date,
+        terms_date=terms_date,
+        payment_method_code=payment_method_code
     )
 
     result = validate_invoice_payload(
@@ -214,7 +258,10 @@ def validate_invoice_payload_tool(
         invoice_date=invoice_date,
         amount=amount,
         currency=currency,
-        description=description
+        description=description,
+        accounting_date=accounting_date,
+        terms_date=terms_date,
+        payment_method_code=payment_method_code
     )
 
     log_response("validate_invoice_payload_tool", result)
@@ -230,7 +277,13 @@ def create_ap_invoice(
     invoice_date: Optional[str] = None,
     amount: Optional[float] = None,
     currency: Optional[str] = None,
-    description: Optional[str] = None
+    description: Optional[str] = None,
+    accounting_date: Optional[str] = None,
+    terms_date: Optional[str] = None,
+    payment_method_code: Optional[str] = None,
+    invoice_source: Optional[str] = None,
+    invoice_type: Optional[str] = None,
+    distribution_combination: Optional[str] = None
 ) -> Dict[str, Any]:
     log_request(
         "create_ap_invoice",
@@ -241,10 +294,21 @@ def create_ap_invoice(
         invoice_date=invoice_date,
         amount=amount,
         currency=currency,
-        description=description
+        description=description,
+        accounting_date=accounting_date,
+        terms_date=terms_date,
+        payment_method_code=payment_method_code,
+        invoice_source=invoice_source,
+        invoice_type=invoice_type,
+        distribution_combination=distribution_combination
     )
 
     final_description = normalize_description(description)
+    final_accounting_date = _clean(accounting_date) or _clean(invoice_date)
+    final_terms_date = _clean(terms_date) or _clean(invoice_date)
+    final_payment_method_code = _clean(payment_method_code) or DEFAULT_PAYMENT_METHOD_CODE
+    final_invoice_source = _clean(invoice_source) or DEFAULT_INVOICE_SOURCE
+    final_invoice_type = _clean(invoice_type) or DEFAULT_INVOICE_TYPE
 
     payload_validation = validate_invoice_payload(
         business_unit=business_unit,
@@ -254,14 +318,18 @@ def create_ap_invoice(
         invoice_date=invoice_date,
         amount=amount,
         currency=currency,
-        description=final_description
+        description=final_description,
+        accounting_date=final_accounting_date,
+        terms_date=final_terms_date,
+        payment_method_code=final_payment_method_code
     )
 
     if not payload_validation["valid"]:
         result = {
             "status": "NEEDS_INFO",
             "message": "Campos obrigatórios faltantes",
-            "missing_fields": payload_validation["errors"]
+            "missing_fields": [_error_to_label(error) for error in payload_validation["errors"]],
+            "details": payload_validation["errors"]
         }
         log_response("create_ap_invoice", result)
         return result
@@ -291,8 +359,14 @@ def create_ap_invoice(
                 "supplier_site": supplier_site,
                 "invoice_number": invoice_number,
                 "invoice_date": invoice_date,
+                "accounting_date": final_accounting_date,
+                "terms_date": final_terms_date,
                 "amount": amount,
                 "currency": currency,
+                "payment_method_code": final_payment_method_code,
+                "invoice_source": final_invoice_source,
+                "invoice_type": final_invoice_type,
+                "distribution_combination": distribution_combination,
                 "description": final_description
             }
         }
@@ -302,7 +376,7 @@ def create_ap_invoice(
     if not FUSION_BASE_URL:
         result = {
             "status": "ERROR",
-            "message": "FUSION_BASE_URL não está definido no .env"
+            "message": "FUSION_BASE_URL ou FUSION_URL não está definido no ambiente"
         }
         log_response("create_ap_invoice", result)
         return result
@@ -315,10 +389,16 @@ def create_ap_invoice(
         "SupplierSite": supplier_site,
         "InvoiceNumber": invoice_number,
         "InvoiceDate": invoice_date,
+        "AccountingDate": final_accounting_date,
+        "TermsDate": final_terms_date,
         "InvoiceAmount": amount,
-        "Currency": currency,
+        "InvoiceCurrency": currency,
+        "PaymentCurrency": currency,
+        "PaymentMethodCode": final_payment_method_code,
+        "InvoiceSource": final_invoice_source,
+        "InvoiceType": final_invoice_type,
         "Description": final_description,
-        "InvoiceLines": [
+        "invoiceLines": [
             {
                 "LineNumber": 1,
                 "LineType": "Item",
@@ -327,6 +407,9 @@ def create_ap_invoice(
             }
         ]
     }
+
+    if _clean(distribution_combination):
+        payload["invoiceLines"][0]["DistributionCombination"] = distribution_combination
 
     try:
         response = requests.post(
@@ -347,6 +430,15 @@ def create_ap_invoice(
         result = {
             "status": "SUCCESS",
             "message": "Invoice criada no Fusion com sucesso",
+            "invoice_id": response_data.get("InvoiceId"),
+            "invoice_number": response_data.get("InvoiceNumber", invoice_number),
+            "business_unit": response_data.get("BusinessUnit", business_unit),
+            "supplier": response_data.get("Supplier", supplier),
+            "supplier_site": response_data.get("SupplierSite", supplier_site),
+            "invoice_amount": response_data.get("InvoiceAmount", amount),
+            "invoice_currency": response_data.get("InvoiceCurrency", currency),
+            "validation_status": response_data.get("ValidationStatus"),
+            "fusion_url": _extract_self_link(response_data),
             "fusion_response": response_data
         }
 
